@@ -1,31 +1,35 @@
 from __future__ import print_function
-import os
-import argparse
 import torch
 import torch.backends.cudnn as cudnn
 import numpy as np
-from data import cfg_mnet, cfg_re50
-from layers.functions.prior_box import PriorBox
+from config import cfg_re50
+from loss.prior_box import PriorBox
 from utils.nms.py_cpu_nms import py_cpu_nms
 import cv2
 from models.retinaface import RetinaFace
 from utils.box_utils import decode, decode_landm
 import time
+import argparse
+import os
+from datetime import datetime
 
-parser = argparse.ArgumentParser(description='Retinaface')
 
-parser.add_argument('-m', '--trained_model', default='./weights/Resnet50_Final.pth',
-                    type=str, help='Trained state_dict file path to open')
-parser.add_argument('--network', default='resnet50', help='Backbone network mobile0.25 or resnet50')
-parser.add_argument('--cpu', action="store_true", default=False, help='Use cpu inference')
-parser.add_argument('--confidence_threshold', default=0.02, type=float, help='confidence_threshold')
-parser.add_argument('--top_k', default=5000, type=int, help='top_k')
-parser.add_argument('--nms_threshold', default=0.4, type=float, help='nms_threshold')
-parser.add_argument('--keep_top_k', default=750, type=int, help='keep_top_k')
-parser.add_argument('-s', '--save_image', action="store_true", default=True, help='show detection results')
-parser.add_argument('--vis_thres', default=0.6, type=float, help='visualization_threshold')
-args = parser.parse_args()
+cpu = True
+confidence_threshold = 0.02
+top_k = 100 #how many of the best face detections to keep after initial sorting of results.
+nms_threshold = 0.4
+keep_top_k = 50
+save_image = True
+visualization_threshold = 0.6
 
+
+''' This function removes a common prefix from a collection of braces in a Python dictionary. 
+    The main goal is to remove the 'module' prefix. 
+    Which may be present in all parameter names of a model trained on an old version of PyTorch. '''
+def remove_prefix(state_dict, prefix):
+    print('remove prefix \'{}\''.format(prefix))
+    f = lambda x: x.split(prefix, 1)[-1] if x.startswith(prefix) else x
+    return {f(key): value for key, value in state_dict.items()}
 
 def check_keys(model, pretrained_state_dict):
     ckpt_keys = set(pretrained_state_dict.keys())
@@ -39,130 +43,144 @@ def check_keys(model, pretrained_state_dict):
     assert len(used_pretrained_keys) > 0, 'load NONE from pretrained checkpoint'
     return True
 
+def show_image(faces,img_raw, image_path):
+    for f in faces:
+        if f[4] < visualization_threshold:
+            continue
+        text = "{:.4f}".format(f[4])
+        f = list(map(int, f))
+        cv2.rectangle(img_raw, (f[0], f[1]), (f[2], f[3]), (0, 0, 255), 2)
+            
+        cx = f[0]
+        cy = f[1] + 12
+        cv2.putText(img_raw, text, (cx, cy),
+                cv2.FONT_HERSHEY_DUPLEX, 0.5, (255, 255, 255))
 
-def remove_prefix(state_dict, prefix):
-    ''' Old style model is stored with all names of parameters sharing common prefix 'module.' '''
-    print('remove prefix \'{}\''.format(prefix))
-    f = lambda x: x.split(prefix, 1)[-1] if x.startswith(prefix) else x
-    return {f(key): value for key, value in state_dict.items()}
+        # landmarks
+        cv2.circle(img_raw, (f[5], f[6]), 1, (0, 0, 255), 4)
+        cv2.circle(img_raw, (f[7], f[8]), 1, (0, 255, 255), 4)
+        cv2.circle(img_raw, (f[9], f[10]), 1, (255, 0, 255), 4)
+        cv2.circle(img_raw, (f[11], f[12]), 1, (0, 255, 0), 4)
+        cv2.circle(img_raw, (f[13], f[14]), 1, (255, 0, 0), 4)
+
+     # save image
+    cv2.imwrite(f"{image_path}/result.jpg", img_raw)
 
 
-def load_model(model, pretrained_path, load_to_cpu):
-    print('Loading pretrained model from {}'.format(pretrained_path))
-    if load_to_cpu:
-        pretrained_dict = torch.load(pretrained_path, map_location=lambda storage, loc: storage)
+def main(args):
+    os.chdir('/app/Recog-API')
+    image_path = args.path
+    #print(image_path)
+    torch.set_grad_enabled(False)
+    cfg = cfg_re50
+    model = RetinaFace(phase = 'test')
+    model_path = '../Detection/checkpoints/Resnet50_final.pth'
+    
+    if cpu:
+        saved_model = torch.load(model_path, map_location=lambda storage, loc: storage)
     else:
         device = torch.cuda.current_device()
-        pretrained_dict = torch.load(pretrained_path, map_location=lambda storage, loc: storage.cuda(device))
-    if "state_dict" in pretrained_dict.keys():
-        pretrained_dict = remove_prefix(pretrained_dict['state_dict'], 'module.')
+        saved_model = torch.load(model_path, map_location=lambda storage, loc: storage.cuda(device))
+
+    if "state_dict" in saved_model.keys():
+        saved_model = remove_prefix(saved_model['state_dict'], 'module.')
     else:
-        pretrained_dict = remove_prefix(pretrained_dict, 'module.')
-    check_keys(model, pretrained_dict)
-    model.load_state_dict(pretrained_dict, strict=False)
-    return model
+        saved_model = remove_prefix(saved_model, 'module.')
+    
+    check_keys(model, saved_model)
 
+    model.load_state_dict(saved_model, strict=False)
+    model.eval()
 
-if __name__ == '__main__':
-    torch.set_grad_enabled(False)
-    cfg = None
-    if args.network == "mobile0.25":
-        cfg = cfg_mnet
-    elif args.network == "resnet50":
-        cfg = cfg_re50
-    # net and model
-    net = RetinaFace(cfg=cfg, phase = 'test')
-    net = load_model(net, args.trained_model, args.cpu)
-    net.eval()
     print('Finished loading model!')
-    print(net)
+    #print(model)
     cudnn.benchmark = True
-    device = torch.device("cpu" if args.cpu else "cuda")
-    net = net.to(device)
+    device = torch.device("cpu" if cpu else "cuda")
+    model = model.to(device)
 
     resize = 1
-
-    # testing begin
+    
     for i in range(100):
-        image_path = "./curve/test.jpg"
-        img_raw = cv2.imread(image_path, cv2.IMREAD_COLOR)
+        now = datetime.now()
+        date_str = now.strftime("%Y/%m/%d")
 
+        img_raw = cv2.imread(image_path, cv2.IMREAD_COLOR)
         img = np.float32(img_raw)
 
         im_height, im_width, _ = img.shape
         scale = torch.Tensor([img.shape[1], img.shape[0], img.shape[1], img.shape[0]])
+        scale = scale.to(device)
         img -= (104, 117, 123)
         img = img.transpose(2, 0, 1)
         img = torch.from_numpy(img).unsqueeze(0)
         img = img.to(device)
-        scale = scale.to(device)
+        
+        for_time = time.time()
+        loc, conf, landmarks = model(img)
+        print('net forward time: {:.4f}'.format(time.time() - for_time))
 
-        tic = time.time()
-        loc, conf, landms = net(img)  # forward pass
-        print('net forward time: {:.4f}'.format(time.time() - tic))
-
-        priorbox = PriorBox(cfg, image_size=(im_height, im_width))
-        priors = priorbox.forward()
-        priors = priors.to(device)
-        prior_data = priors.data
+        prior_box = PriorBox(image_size=(im_height, im_width))
+        anchors = prior_box.forward()
+        anchors = anchors.to(device)
+        prior_data = anchors.data
         boxes = decode(loc.data.squeeze(0), prior_data, cfg['variance'])
         boxes = boxes * scale / resize
         boxes = boxes.cpu().numpy()
         scores = conf.squeeze(0).data.cpu().numpy()[:, 1]
-        landms = decode_landm(landms.data.squeeze(0), prior_data, cfg['variance'])
-        scale1 = torch.Tensor([img.shape[3], img.shape[2], img.shape[3], img.shape[2],
+        landmarks = decode_landm(landmarks.data.squeeze(0), prior_data, cfg['variance'])
+        scale2 = torch.Tensor([img.shape[3], img.shape[2], img.shape[3], img.shape[2],
                                img.shape[3], img.shape[2], img.shape[3], img.shape[2],
                                img.shape[3], img.shape[2]])
-        scale1 = scale1.to(device)
-        landms = landms * scale1 / resize
-        landms = landms.cpu().numpy()
+        scale2 = scale2.to(device)
+        landmarks = landmarks * scale2 / resize
+        landmarks = landmarks.cpu().numpy()
 
-        # ignore low scores
-        inds = np.where(scores > args.confidence_threshold)[0]
-        boxes = boxes[inds]
-        landms = landms[inds]
-        scores = scores[inds]
+        lows = np.where(scores > confidence_threshold)[0]
+        boxes = boxes[lows] #ignore lows conf boxes
+        landmarks = landmarks[lows] #ignore lows lands
+        scores = scores[lows] #ignore lows scores
 
-        # keep top-K before NMS
-        order = scores.argsort()[::-1][:args.top_k]
+        # keep top-K before Non-Maximum Suppression(NMS)
+        order = scores.argsort()[::-1][:top_k] #order by best scores
         boxes = boxes[order]
-        landms = landms[order]
+        landmarks = landmarks[order]
         scores = scores[order]
 
-        # do NMS
-        dets = np.hstack((boxes, scores[:, np.newaxis])).astype(np.float32, copy=False)
-        keep = py_cpu_nms(dets, args.nms_threshold)
-        # keep = nms(dets, args.nms_threshold,force_cpu=args.cpu)
-        dets = dets[keep, :]
-        landms = landms[keep]
+        # NMS reduce redundancy in dets
+        faces = np.hstack((boxes, scores[:, np.newaxis])).astype(np.float32, copy=False)
+        keep = py_cpu_nms(faces, nms_threshold)
+        faces = faces[keep, :]
+        landmarks = landmarks[keep]
 
-        # keep top-K faster NMS
-        dets = dets[:args.keep_top_k, :]
-        landms = landms[:args.keep_top_k, :]
+        # keep bests finals dets
+        faces = faces[:keep_top_k, :]
+        landmarks = landmarks[:keep_top_k, :]
 
-        dets = np.concatenate((dets, landms), axis=1)
-
+        faces = np.concatenate((faces, landmarks), axis=1)
+        
+        os.chdir('/app/Recog-API/'+date_str)
+        if not os.path.exists('cropped_images'):
+            os.makedirs('cropped_images')
+                
+        # crop each bounding box in a separate image
+        for i, det in enumerate(faces):
+            if det[4] < visualization_threshold:
+                continue
+            x1, y1, x2, y2 = det[:4]
+            cropped_img = img_raw[int(y1):int(y2), int(x1):int(x2), :]
+            resized_image = cv2.resize(cropped_img, (150, 150))
+            cv2.imwrite(f"cropped_images/cropped_image_{i}.jpg", resized_image)
+            im_height, im_width, _ = resized_image.shape
+            #print(f'altura: {im_height} -||- largura: {im_width}')
         # show image
-        if args.save_image:
-            for b in dets:
-                if b[4] < args.vis_thres:
-                    continue
-                text = "{:.4f}".format(b[4])
-                b = list(map(int, b))
-                cv2.rectangle(img_raw, (b[0], b[1]), (b[2], b[3]), (0, 0, 255), 2)
-                cx = b[0]
-                cy = b[1] + 12
-                cv2.putText(img_raw, text, (cx, cy),
-                            cv2.FONT_HERSHEY_DUPLEX, 0.5, (255, 255, 255))
+        #show_image(faces,img_raw, image_path)
+        
+    return 'ok'
 
-                # landms
-                cv2.circle(img_raw, (b[5], b[6]), 1, (0, 0, 255), 4)
-                cv2.circle(img_raw, (b[7], b[8]), 1, (0, 255, 255), 4)
-                cv2.circle(img_raw, (b[9], b[10]), 1, (255, 0, 255), 4)
-                cv2.circle(img_raw, (b[11], b[12]), 1, (0, 255, 0), 4)
-                cv2.circle(img_raw, (b[13], b[14]), 1, (255, 0, 0), 4)
-            # save image
 
-            name = "test.jpg"
-            cv2.imwrite(name, img_raw)
-
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        description="Distributed Arcface Training in Pytorch")
+    parser.add_argument("path", type=str, help="the path to images")
+    main(parser.parse_args())
+    

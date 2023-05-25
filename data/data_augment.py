@@ -233,5 +233,5 @@ class preproc(object):
 
         labels_t = np.expand_dims(labels_t, 1)
         targets_t = np.hstack((boxes_t, landm_t, labels_t))
-
+        
         return image_t, targets_t
