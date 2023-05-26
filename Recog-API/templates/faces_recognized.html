@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Faces Reconhecidas</title>
+    <base href="{{request.host_url}}">
+</head>
+<body>
+    <div>
+        <ul>
+          {% for classe, imagem in zipped %}
+            <li class="li"><strong>{{ classe }}</strong></li>
+            <img class='img' src="{{ url_for('get_image', filename=imagem) }}" alt="Imagem">
+          {% endfor %}
+        </ul>
+      </div>
+</body>
+
+<style>
+    .img{
+        width: 150px;
+        height: 150px;
+    }
+    .li{
+      font-size: 18px;
+    }
+</style>

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Faces Detectadas</title>
+    <base href="{{request.host_url}}">
+</head>
+<body>
+    <div>
+        {% for imagem in imagens %}
+        <img class='img' src="{{ url_for('get_image', filename=imagem) }}" alt="Imagem">
+        {% endfor %}
+    </div>
+</body>
+
+<style>
+    .img{
+        width: 150px;
+        height: 150px;
+    }
+</style>

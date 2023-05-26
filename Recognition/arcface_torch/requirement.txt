@@ -1,0 +1,9 @@
+tensorboard
+easydict
+mxnet
+onnx
+sklearn
+opencv-python
+wandb
+cmake
+dlib

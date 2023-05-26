@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Detecção e Reconhecimento de Faces</title>
+</head>
+<body>
+	<h1>Detecção e Reconhecimento de Faces</h1>
+	<h2>Detectar faces</h2>
+    <form method="post" enctype="multipart/form-data" action="{{ url_for('detect_faces') }}">
+        <input type="file" name="file">
+		<br><br>
+        <button type="submit">Detectar faces</button>
+    </form>
+	<br><br>
+	<h2>Reconhecer faces</h2>
+	<form action="{{ url_for('recognize_faces') }}" method="POST" enctype="multipart/form-data">
+		<input type="file" name="file">
+		<br><br>
+		<button type="submit">Reconhecer Faces</button>
+	</form>
+</body>
+</html>
