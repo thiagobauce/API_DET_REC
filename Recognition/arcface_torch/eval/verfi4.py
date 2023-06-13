@@ -1,33 +1,18 @@
 """Helper for evaluation on the Labeled Faces in the Wild dataset 
 """
 
-# MIT License
-#
-# Copyright (c) 2016 David Sandberg
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
+import sys
+import os
 
+# Obtenha o caminho absoluto para o diretório do pacote arcface_torch
+package_path = os.path.dirname(os.path.abspath(__file__))
+arcface_torch_path = os.path.abspath(os.path.join(package_path, '..'))
+sys.path.insert(0, arcface_torch_path)
 
 import datetime
 import os
 import pickle
-
+import argparse
 import mxnet as mx
 import numpy as np
 import sklearn
@@ -36,6 +21,14 @@ from mxnet import ndarray as nd
 from scipy import interpolate
 from sklearn.decomposition import PCA
 from sklearn.model_selection import KFold
+import torch
+import torchvision
+from torchvision import transforms
+import torchvision.transforms as transforms
+from backbones import get_model
+import torch.nn as nn
+from PIL import Image
+
 
 
 class LFold:
@@ -197,32 +190,40 @@ def evaluate(embeddings, actual_issame, nrof_folds=10, pca=0):
     return tpr, fpr, accuracy, val, val_std, far
 
 @torch.no_grad()
-def load_bin(path, image_size):
-    try:
-        with open(path, 'rb') as f:
-            bins, issame_list = pickle.load(f)  # py2
-    except UnicodeDecodeError as e:
-        with open(path, 'rb') as f:
-            bins, issame_list = pickle.load(f, encoding='bytes')  # py3
+def load_rec(path, image_size):
+    record = mx.recordio.MXIndexedRecordIO(path + 'test.idx', path + 'test.rec', 'r')
+    #header, _ = mx.recordio.unpack(record.read_idx(0))
+    # Verifica se o arquivo .rec contém imagens
+    #if header.flag != 0:
+    #    raise ValueError('O arquivo não contém imagens.')
+    # Obtém o número total de imagens
+    num_images = 3529
     data_list = []
     for flip in [0, 1]:
-        data = torch.empty((len(issame_list) * 2, 3, image_size[0], image_size[1]))
+        data = torch.empty((num_images * 2, 3, image_size[0], image_size[1]))
         data_list.append(data)
-    for idx in range(len(issame_list) * 2):
-        _bin = bins[idx]
-        img = mx.image.imdecode(_bin)
+    idx = 0
+    while True:
+        try:
+            _, img = mx.recordio.unpack(record.read_idx(idx))
+        except KeyError:
+            break
+        img = mx.image.imdecode(img)
         if img.shape[1] != image_size[0]:
             img = mx.image.resize_short(img, image_size[0])
-        img = nd.transpose(img, axes=(2, 0, 1))
+        img = mx.nd.transpose(img, axes=(2, 0, 1))
         for flip in [0, 1]:
             if flip == 1:
                 img = mx.ndarray.flip(data=img, axis=2)
             data_list[flip][idx][:] = torch.from_numpy(img.asnumpy())
         if idx % 1000 == 0:
-            print('loading bin', idx)
+            print('Carregando imagem', idx)
+        idx += 1
     print(data_list[0].shape)
+    issame_list = [1] * num_images + [0] * num_images
     print(issame_list)
     return data_list, issame_list
+
 
 @torch.no_grad()
 def test(data_set, backbone, batch_size, nfolds=10):
@@ -231,10 +232,12 @@ def test(data_set, backbone, batch_size, nfolds=10):
     issame_list = data_set[1]
     embeddings_list = []
     time_consumed = 0.0
+    print(f'tamanho do data_list {len(data_list)}',)
     for i in range(len(data_list)):
         data = data_list[i]
         embeddings = None
         ba = 0
+        print( i,end=' ')
         while ba < data.shape[0]:
             bb = min(ba + batch_size, data.shape[0])
             count = bb - ba
@@ -322,89 +325,62 @@ def dumpR(data_set,
                     protocol=pickle.HIGHEST_PROTOCOL)
 
 
-#if __name__ == '__main__':
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='do verification')
+    # general
+    parser.add_argument('--data-dir', default='../megaface', help='')
+    parser.add_argument('--model',
+                        default='../checkpoints/model_finned.pt',
+                        help='path to load model.')
+    parser.add_argument('--target',
+                        default='test',
+                        help='test targets.')
+    parser.add_argument('--gpu', default=1, type=int, help='gpu id')
+    parser.add_argument('--batch-size', default=32, type=int, help='')
+    parser.add_argument('--max', default='', type=str, help='')
+    parser.add_argument('--mode', default=0, type=int, help='')
+    parser.add_argument('--nfolds', default=10, type=int, help='')
+    args = parser.parse_args()
+    image_size = [112, 112]
+    print('image_size', image_size)
+    device = torch.device(args.gpu)
+    
+    #model = torchvision.models.resnet50(pretrained=True)
+    #model.fc = nn.Linear(model.fc.in_features, 512)
+    #model.classifier = nn.Linear(model.fc.in_features, 512)
+    #model.load_state_dict(torch.load(args.model)['model'])
 
-#    parser = argparse.ArgumentParser(description='do verification')
-#    # general
-#    parser.add_argument('--data-dir', default='', help='')
-#    parser.add_argument('--model',
-#                        default='../model/softmax,50',
-#                        help='path to load model.')
-#    parser.add_argument('--target',
-#                        default='lfw,cfp_ff,cfp_fp,agedb_30',
-#                        help='test targets.')
-#    parser.add_argument('--gpu', default=0, type=int, help='gpu id')
-#    parser.add_argument('--batch-size', default=32, type=int, help='')
-#    parser.add_argument('--max', default='', type=str, help='')
-#    parser.add_argument('--mode', default=0, type=int, help='')
-#    parser.add_argument('--nfolds', default=10, type=int, help='')
-#    args = parser.parse_args()
-#    image_size = [112, 112]
-#    print('image_size', image_size)
-#    ctx = mx.gpu(args.gpu)
-#    nets = []
-#    vec = args.model.split(',')
-#    prefix = args.model.split(',')[0]
-#    epochs = []
-#    if len(vec) == 1:
-#        pdir = os.path.dirname(prefix)
-#        for fname in os.listdir(pdir):
-#            if not fname.endswith('.params'):
-#                continue
-#            _file = os.path.join(pdir, fname)
-#            if _file.startswith(prefix):
-#                epoch = int(fname.split('.')[0].split('-')[1])
-#                epochs.append(epoch)
-#        epochs = sorted(epochs, reverse=True)
-#        if len(args.max) > 0:
-#            _max = [int(x) for x in args.max.split(',')]
-#            assert len(_max) == 2
-#            if len(epochs) > _max[1]:
-#                epochs = epochs[_max[0]:_max[1]]
+    model = get_model('r50', fp16=False)
+    model.fc = torch.nn.Linear(model.fc.in_features,512)
+    model.classifier = torch.nn.Linear(512,19)
+    model.load_state_dict(torch.load(args.model,map_location=device))
 
-#    else:
-#        epochs = [int(x) for x in vec[1].split('|')]
-#    print('model number', len(epochs))
-#    time0 = datetime.datetime.now()
-#    for epoch in epochs:
-#        print('loading', prefix, epoch)
-#        sym, arg_params, aux_params = mx.model.load_checkpoint(prefix, epoch)
-#        # arg_params, aux_params = ch_dev(arg_params, aux_params, ctx)
-#        all_layers = sym.get_internals()
-#        sym = all_layers['fc1_output']
-#        model = mx.mod.Module(symbol=sym, context=ctx, label_names=None)
-#        # model.bind(data_shapes=[('data', (args.batch_size, 3, image_size[0], image_size[1]))], label_shapes=[('softmax_label', (args.batch_size,))])
-#        model.bind(data_shapes=[('data', (args.batch_size, 3, image_size[0],
-#                                          image_size[1]))])
-#        model.set_params(arg_params, aux_params)
-#        nets.append(model)
-#    time_now = datetime.datetime.now()
-#    diff = time_now - time0
-#    print('model loading time', diff.total_seconds())
-
-#    ver_list = []
-#    ver_name_list = []
-#    for name in args.target.split(','):
-#        path = os.path.join(args.data_dir, name + ".bin")
-#        if os.path.exists(path):
-#            print('loading.. ', name)
-#            data_set = load_bin(path, image_size)
-#            ver_list.append(data_set)
-#            ver_name_list.append(name)
-
-#    if args.mode == 0:
-#        for i in range(len(ver_list)):
-#            results = []
-#            for model in nets:
-#                acc1, std1, acc2, std2, xnorm, embeddings_list = test(
-#                    ver_list[i], model, args.batch_size, args.nfolds)
-#                print('[%s]XNorm: %f' % (ver_name_list[i], xnorm))
-#                print('[%s]Accuracy: %1.5f+-%1.5f' % (ver_name_list[i], acc1, std1))
-#                print('[%s]Accuracy-Flip: %1.5f+-%1.5f' % (ver_name_list[i], acc2, std2))
-#                results.append(acc2)
-#            print('Max of [%s] is %1.5f' % (ver_name_list[i], np.max(results)))
-#    elif args.mode == 1:
-#        raise ValueError
-#    else:
-#        model = nets[0]
-#        dumpR(ver_list[0], model, args.batch_size, args.target)
+    model.eval()
+    nets = []
+    nets.append(model)
+    ver_list = []
+    ver_name_list = []
+    #for name in args.target.split(','):
+    path = '/app/Recognition/arcface_torch/pepo_ds/test/'
+    if os.path.exists(path):
+        print('loading.. ', 'test')
+        data_set = load_rec(path, image_size)
+        ver_list.append(data_set)
+        print(len(ver_list))
+        ver_name_list.append('test')
+    if args.mode == 0:
+        for i in range(len(ver_list)):
+            results = []
+            for model in nets:
+                acc1, std1, acc2, std2, xnorm, embeddings_list = test(
+                    ver_list[i], model, args.batch_size, args.nfolds)
+                print('[%s]XNorm: %f' % (ver_name_list[i], xnorm))
+                print('[%s]Accuracy: %1.5f+-%1.5f' % (ver_name_list[i], acc1, std1))
+                print('[%s]Accuracy-Flip: %1.5f+-%1.5f' % (ver_name_list[i], acc2, std2))
+                results.append(acc2)
+            print('Max of [%s] is %1.5f' % (ver_name_list[i], np.max(results)))
+    elif args.mode == 1:
+        raise ValueError
+    else:
+        model = nets[0]
+        dumpR(ver_list[0], model, args.batch_size, args.target)

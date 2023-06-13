@@ -1,131 +1,257 @@
-import torch
-import torchvision
-import torchvision.transforms as transforms
-import torch.nn as nn
-import torch.optim as optim
-from tqdm import tqdm
-import numpy as np
-import pdb
-import time
-import torchsummary
+import argparse
+import logging
 import os
-from torch import distributed
-import math
+from datetime import datetime
+
+import numpy as np
+import torch
+from backbones import get_model
+from dataset import get_dataloader
 from losses import CombinedMarginLoss, ArcFace, CosFace
-from partial_fc_v2 import PartialFC_V2, DistCrossEntropyFunc, DistCrossEntropy, AllGatherFunc
+from lr_scheduler import PolynomialLRWarmup
+from partial_fc_v2 import PartialFC_V2
+from torch import distributed
+from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
+from utils.utils_callbacks import CallBackLogging, CallBackVerification
+from utils.utils_config import get_config
+from utils.utils_distributed_sampler import setup_seed
+from utils.utils_logging import AverageMeter, init_logging
+from torch.distributed.algorithms.ddp_comm_hooks.default_hooks import fp16_compress_hook
 
-PYTORCH_CUDA_ALLOC_CONF = 0
+import time
 
-if __name__ == '__main__':
-    n_classes = 10177
-    emb_size = 512
-    batch_size = 128
-    initial_lr = 0.001
-    lr = initial_lr
+assert torch.__version__ >= "1.12.0", "In order to enjoy the features of the new torch, \
+we have upgraded the torch to 1.12.0. torch before than 1.12.0 may not work in the future."
 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-    transform = transforms.Compose([transforms.Resize((50,50)),
-                                    transforms.ToTensor(),
-                                    transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-                                ])
-
-    ds_train = torchvision.datasets.CelebA('./', split='train', target_type='identity', transform=transform, download=True)
-    ds_test = torchvision.datasets.CelebA('./', split='test', target_type='identity', transform=transform, download=True)
-
-    dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size, drop_last=True)
-    dl_test  = torch.utils.data.DataLoader(ds_test, batch_size=batch_size, drop_last=True)
-
-    x, y = next(iter(dl_train))
-    print('aqui')
-
-    model = torchvision.models.resnet50(pretrained=True)
-    model.fc = nn.Linear(model.fc.in_features, emb_size)
-    model.classifier = nn.Linear(model.fc.in_features, emb_size)
-
-    model.to(device)
-
-    world_size = 1
+try:
+    rank = int(os.environ["RANK"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+    distributed.init_process_group("nccl")
+except KeyError:
     rank = 0
+    local_rank = 1
+    world_size = 1
     distributed.init_process_group(
         backend="nccl",
-        init_method="tcp://127.0.0.1:12585",
+        init_method="tcp://127.0.0.1:12584",
         rank=rank,
         world_size=world_size,
     )
 
-    print('foi')
 
-    margin_loss = ArcFace()
-    loss_function = PartialFC_V2(margin_loss=margin_loss, embedding_size=emb_size, num_classes=n_classes, sample_rate=0.4)
-    loss_function.train().to(device)
 
-    opt = optim.AdamW(model.parameters(), lr=lr)
-    stop = False
+def main(args):
 
-    epoch = 0
-    patience = 10
     start_time = time.perf_counter()
-    batch_loss = []
-    batch_loss_test = []
-    best_loss = 10000
-    stable_loss_counter = 0  # Contador para verificar estabilidade da perda de teste
-    stable_loss_threshold = 1e-3  # Limiar de diferença de perda para considerar como estável
-    print('foi')
-    while not stop:
-        batch_list_loss = []
-        batch_iterator = tqdm(dl_train)
 
-        for i, (x, y) in enumerate(batch_iterator):
-            x = x.to(device)
-            y = y.to(device)
-            embeddings = model(x)
-            loss = loss_function(embeddings, y)
+    # get config
+    cfg = get_config(args.config)
+    # global control random seed
+    setup_seed(seed=cfg.seed, cuda_deterministic=False)
 
-            opt.zero_grad()
-            loss.backward()
-            batch_list_loss.append(loss.item())
-            opt.step()
+    torch.cuda.set_device(local_rank)
 
-        batch_loss.append(np.mean(batch_list_loss))
-        print("training loss", batch_loss[-1])
+    os.makedirs(cfg.output, exist_ok=True)
+    init_logging(rank, cfg.output)
 
-        with torch.no_grad():
-            batch_list_loss = []
-            for i, (x, y) in enumerate(dl_test):
-                x = x.to(device)
-                y = y.to(device)
-                embeddings = model(x)
-                loss = loss_function(embeddings, y)
-                batch_list_loss.append(loss.item())
-            batch_loss_test.append(np.mean(batch_list_loss))
-        print("test loss", batch_loss_test[-1])
+    summary_writer = (
+        SummaryWriter(log_dir=os.path.join(cfg.output, "tensorboard"))
+        if rank == 0
+        else None
+    )
+    
+    wandb_logger = None
+    if cfg.using_wandb:
+        import wandb
+        # Sign in to wandb
+        try:
+            wandb.login(key=cfg.wandb_key)
+        except Exception as e:
+            print("WandB Key must be provided in config file (base.py).")
+            print(f"Config Error: {e}")
+        # Initialize wandb
+        run_name = datetime.now().strftime("%y%m%d_%H%M") + f"_GPU{rank}"
+        run_name = run_name if cfg.suffix_run_name is None else run_name + f"_{cfg.suffix_run_name}"
+        try:
+            wandb_logger = wandb.init(
+                entity = cfg.wandb_entity, 
+                project = cfg.wandb_project, 
+                sync_tensorboard = True,
+                resume=cfg.wandb_resume,
+                name = run_name, 
+                notes = cfg.notes) if rank == 0 or cfg.wandb_log_all else None
+            if wandb_logger:
+                wandb_logger.config.update(cfg)
+        except Exception as e:
+            print("WandB Data (Entity and Project name) must be provided in config file (base.py).")
+            print(f"Config Error: {e}")
+    train_loader = get_dataloader(
+        cfg.rec,
+        local_rank,
+        cfg.batch_size,
+        cfg.dali,
+        cfg.dali_aug,
+        cfg.seed,
+        cfg.num_workers
+    )
 
-        if batch_loss_test[-1] < best_loss:
-            print("saving model")
-            patience_wait = patience
-            best_loss = batch_loss_test[-1]
-            save_model = {'model': model.state_dict(), 'opt': opt.state_dict(), 'loss_training': batch_loss, 'epoch': epoch}
-            torch.save(save_model, f"best_model_v1_{epoch}.pth")
-        else:
-            stable_loss_counter += 1
-            if stable_loss_counter >= patience:
-                print("Test loss has stabilized. Stopping training.")
-                stop = True
+    backbone = get_model(
+        cfg.network, dropout=0.0, fp16=cfg.fp16, num_features=cfg.embedding_size).cuda()
 
-        if batch_loss[-1] < 1.5:
-            patience_wait -= 1
-            if patience_wait == 0:
-                print("Training loss has stabilized. Stopping training.")
-                stop = True
 
-        print("saving model")
-        save_model = {'model': model.state_dict(), 'opt': opt.state_dict(), 'loss_training': batch_loss, 'epoch': epoch}
-        torch.save(save_model, 'best_model_{}.pth'.format(epoch))
-        print('Epoch: {} || LR: {}  ||  Patience_wait: {} '.format(epoch, lr, patience_wait))
-        epoch += 1
+    backbone.train()
+
+    backbone.load_state_dict(torch.load('/app/Recognition/arcface_torch/checkpoints/model.pt'))
+
+    backbone.fc = torch.nn.Linear(backbone.fc.in_features,512)
+    backbone.classifier = torch.nn.Linear(512,19)
+    backbone = backbone.cuda()
+
+    margin_loss = CombinedMarginLoss(
+        64,
+        1.00,
+        0.5,
+        0.0,
+        0
+    )
+
+    if cfg.optimizer == "sgd":
+        module_partial_fc = PartialFC_V2(
+            margin_loss, cfg.embedding_size, cfg.num_classes,
+            cfg.sample_rate, False)
+        module_partial_fc.train().cuda()
+        # TODO the params of partial fc must be last in the params list
+        opt = torch.optim.SGD(
+            params=[{"params": backbone.parameters()}, {"params": module_partial_fc.parameters()}],
+            lr=cfg.lr, momentum=0.9, weight_decay=cfg.weight_decay)
+
+    elif cfg.optimizer == "adamw":
+        module_partial_fc = PartialFC_V2(
+            margin_loss, cfg.embedding_size, cfg.num_classes,
+            cfg.sample_rate, False)
+        module_partial_fc.train().cuda()
+        opt = torch.optim.AdamW(
+            params=[{"params": backbone.parameters()}, {"params": module_partial_fc.parameters()}],
+            lr=cfg.lr, weight_decay=cfg.weight_decay)
+    else:
+        raise
+
+    cfg.total_batch_size = cfg.batch_size * world_size
+    cfg.warmup_step = cfg.num_image // cfg.total_batch_size * cfg.warmup_epoch
+    cfg.total_step = cfg.num_image // cfg.total_batch_size * cfg.num_epoch
+
+    lr_scheduler = PolynomialLRWarmup(
+        optimizer=opt,
+        warmup_iters=cfg.warmup_step,
+        total_iters=cfg.total_step)
+
+    start_epoch = 0
+    global_step = 0
+    
+    for key, value in cfg.items():
+        num_space = 25 - len(key)
+        logging.info(": " + key + " " * num_space + str(value))
+
+    callback_verification = CallBackVerification(
+        val_targets=cfg.val_targets, rec_prefix=cfg.rec, 
+        summary_writer=summary_writer, wandb_logger = wandb_logger
+    )
+    callback_logging = CallBackLogging(
+        frequent=cfg.frequent,
+        total_step=cfg.total_step,
+        batch_size=cfg.batch_size,
+        start_step = global_step,
+        writer=summary_writer
+    )
+
+    loss_am = AverageMeter()
+    amp = torch.cuda.amp.grad_scaler.GradScaler(growth_interval=100)
+
+    for epoch in range(start_epoch, cfg.num_epoch):
+
+        if isinstance(train_loader, DataLoader):
+            train_loader.sampler.set_epoch(epoch)
+        
+        print()
+        for _, (img, local_labels) in enumerate(train_loader):
+            global_step += 1
+            local_embeddings = backbone(img)
+            loss: torch.Tensor = module_partial_fc(local_embeddings, local_labels)
+
+            if cfg.fp16:
+                amp.scale(loss).backward()
+                if global_step % cfg.gradient_acc == 0:
+                    amp.unscale_(opt)
+                    torch.nn.utils.clip_grad_norm_(backbone.parameters(), 5)
+                    amp.step(opt)
+                    amp.update()
+                    opt.zero_grad()
+            else:
+                loss.backward()
+                if global_step % cfg.gradient_acc == 0:
+                    torch.nn.utils.clip_grad_norm_(backbone.parameters(), 5)
+                    opt.step()
+                    opt.zero_grad()
+            lr_scheduler.step()
+
+            with torch.no_grad():
+                if wandb_logger:
+                    wandb_logger.log({
+                        'Loss/Step Loss': loss.item(),
+                        'Loss/Train Loss': loss_am.avg,
+                        'Process/Step': global_step,
+                        'Process/Epoch': epoch
+                    })
+                    
+                loss_am.update(loss.item(), 1)
+                callback_logging(global_step, loss_am, epoch, cfg.fp16, lr_scheduler.get_last_lr()[0], amp)
+
+                if global_step % cfg.verbose == 0 and global_step > 0:
+                    callback_verification(global_step, backbone)
+
+        if cfg.save_all_states:
+            checkpoint = {
+                "epoch": epoch + 1,
+                "global_step": global_step,
+                "state_dict_backbone": backbone.state_dict(),
+                "state_dict_softmax_fc": module_partial_fc.state_dict(),
+                "state_optimizer": opt.state_dict(),
+                "state_lr_scheduler": lr_scheduler.state_dict()
+            }
+            torch.save(checkpoint, os.path.join(cfg.output, f"checkpoint_pfc03_gpu_{rank}.pt"))
+
+        if rank == 0:
+            path_module = os.path.join(cfg.output, "model_finned.pt")
+            torch.save(backbone.state_dict(), path_module)
+
+            if wandb_logger and cfg.save_artifacts:
+                artifact_name = f"{run_name}_E{epoch}"
+                model = wandb.Artifact(artifact_name, type='model')
+                model.add_file(path_module)
+                wandb_logger.log_artifact(model)
+                
+        if cfg.dali:
+            train_loader.reset()
+
+    if rank == 0:
+        path_module = os.path.join(cfg.output, "model_finned.pt")
+        torch.save(backbone.state_dict(), path_module)
+        
+        if wandb_logger and cfg.save_artifacts:
+            artifact_name = f"{run_name}_Final"
+            model = wandb.Artifact(artifact_name, type='model')
+            model.add_file(path_module)
+            wandb_logger.log_artifact(model)
 
     end_time = time.perf_counter()
+    print("Training time:", end_time - start_time)
 
-    save_model = {'model': model.state_dict(), 'opt': opt.state_dict(), 'loss_training': batch_list_loss, 'epoch': epoch}
-    torch.save(save_model, 'last_run.pth')
+
+if __name__ == "__main__":
+    torch.backends.cudnn.benchmark = True
+    parser = argparse.ArgumentParser(
+        description="Distributed Arcface Training in Pytorch")
+    parser.add_argument("config", type=str, help="py config file")
+    main(parser.parse_args())

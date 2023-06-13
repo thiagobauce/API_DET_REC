@@ -9,29 +9,6 @@ package_path = os.path.dirname(os.path.abspath(__file__))
 arcface_torch_path = os.path.abspath(os.path.join(package_path, '..'))
 sys.path.insert(0, arcface_torch_path)
 
-# MIT License
-#
-# Copyright (c) 2016 David Sandberg
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
-
 import datetime
 import os
 import pickle
@@ -237,6 +214,7 @@ def load_bin(path, image_size):
         if idx % 1000 == 0:
             print('loading bin', idx)
     print(data_list[0].shape)
+    print(issame_list)
     return data_list, issame_list
 
 @torch.no_grad()
@@ -246,6 +224,7 @@ def test(data_set, backbone, batch_size, nfolds=10):
     issame_list = data_set[1]
     embeddings_list = []
     time_consumed = 0.0
+    image_count = 0
     for i in range(len(data_list)):
         data = data_list[i]
         embeddings = None
@@ -261,6 +240,7 @@ def test(data_set, backbone, batch_size, nfolds=10):
             time_now = datetime.datetime.now()
             diff = time_now - time0
             time_consumed += diff.total_seconds()
+            image_count += count
             if embeddings is None:
                 embeddings = np.zeros((data.shape[0], _embeddings.shape[1]))
             embeddings[ba:bb, :] = _embeddings[(batch_size - count):, :]
@@ -285,6 +265,7 @@ def test(data_set, backbone, batch_size, nfolds=10):
     embeddings = sklearn.preprocessing.normalize(embeddings)
     print(embeddings.shape)
     print('infer time', time_consumed)
+    print('number of images read:', image_count)
     _, _, accuracy, val, val_std, far = evaluate(embeddings, issame_list, nrof_folds=nfolds)
     acc2, std2 = np.mean(accuracy), np.std(accuracy)
     return acc1, std1, acc2, std2, _xnorm, embeddings_list
@@ -342,12 +323,12 @@ if __name__ == '__main__':
     # general
     parser.add_argument('--data-dir', default='../faces_emore', help='')
     parser.add_argument('--model',
-                        default='../checkpoints/model.pt',
+                        default='../checkpoints/model_finned.pt',
                         help='path to load model.')
     parser.add_argument('--target',
-                        default='cplfw',
+                        default='agedb_30',
                         help='test targets.')
-    parser.add_argument('--gpu', default=1, type=int, help='gpu id')
+    parser.add_argument('--gpu', default=0, type=int, help='gpu id')
     parser.add_argument('--batch-size', default=32, type=int, help='')
     parser.add_argument('--max', default='', type=str, help='')
     parser.add_argument('--mode', default=0, type=int, help='')
@@ -363,6 +344,8 @@ if __name__ == '__main__':
     #model.load_state_dict(torch.load(args.model)['model'])
 
     model = get_model('r50', fp16=False)
+    model.fc = torch.nn.Linear(model.fc.in_features,512)
+    model.classifier = torch.nn.Linear(512,19)
     model.load_state_dict(torch.load(args.model))
 
     model = model.to(device)
