@@ -15,7 +15,7 @@ To test the model using sklearn metrics, apply k-nearest neighbors (knn) on a da
 The recognize.py script is used by the API to perform facial recognition. It searches a directory containing predefined identities.
 
 ## Requirements
-Python 3.0 or higher
+Python 3.x
 PyTorch
 Scikit-learn
 
