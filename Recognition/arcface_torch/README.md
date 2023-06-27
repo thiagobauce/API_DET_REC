@@ -20,3 +20,4 @@ PyTorch
 Scikit-learn
 
 ## References
+-[ArcFace Partial FC](https://github.com/deepinsight/insightface)
