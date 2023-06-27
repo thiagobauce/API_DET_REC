@@ -19,11 +19,11 @@ transform = transforms.Compose([
     transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 ])
 
-device = 'cuda'
+device = torch.device('cuda:1')
 
 if __name__ == '__main__':
     # Diretório raiz que contém os diretórios das identidades
-    root_directory = r"D:\Dataset\Recognition\arcface_torch\megaface\data\facescrub_images"
+    root_directory = "/app/Recognition/arcface_torch/pepo_ds/test"
 
     # Lista de identidades (pessoas) baseada nos diretórios presentes no diretório raiz
     identities = os.listdir(root_directory)
@@ -52,20 +52,20 @@ if __name__ == '__main__':
         images2 = images_per_identity[identity2]
         pairs = list(itertools.product(images1, images2))
         negative_pairs.extend(pairs)
-    print('negative: ',len(negative_pairs))
+    print('negative: ', len(negative_pairs))
 
     start_time = time.time()
 
-    model_path = r"D:\Dataset\Recognition\arcface_torch\checkpoints\model.pt"
-    #model_path = r"D:\Dataset\Recognition\arcface_torch\checkpoints\model_finned.pt"
+    #model_path = '/app/Recognition/arcface_torch/checkpoints/model_fi.pt'
+    model_path = '/app/Recognition/arcface_torch/checkpoints/model_ruim.pt'
     model = get_model('r50', fp16=False)
     #model.fc = torch.nn.Linear(model.fc.in_features,512)
     #model.classifier = torch.nn.Linear(512,19)
-    model.load_state_dict(torch.load(model_path, map_location='cuda'))
+    model.load_state_dict(torch.load(model_path, map_location='cuda:1'))
+    model.to(device)
     model.eval()
     
     predict_pos = []
-    print(len(positive_pairs))
     for anchor, comparison in positive_pairs:
         # Carregar as imagens de anchor e comparison
         anchor_img = Image.open(anchor).convert('RGB')
@@ -82,7 +82,7 @@ if __name__ == '__main__':
 
         # Calcular a distância euclidiana entre os embeddings para realizar a verificação
         distance = cosine_similarity(anchor_embedding, comparison_embedding)
-        if distance > 0.4:
+        if distance > 0.3:
             predict_pos.append(1)
         else:
             predict_pos.append(0)
@@ -98,8 +98,8 @@ if __name__ == '__main__':
         comparison_img = Image.open(comparison).convert('RGB')
 
         # Pré-processar as imagens
-        anchor_img = transform(anchor_img).unsqueeze(0)
-        comparison_img = transform(comparison_img).unsqueeze(0)
+        anchor_img = transform(anchor_img).unsqueeze(0).to(device)
+        comparison_img = transform(comparison_img).unsqueeze(0).to(device)
 
         # Extrair os embeddings das imagens
         with torch.no_grad():
@@ -108,7 +108,7 @@ if __name__ == '__main__':
 
         # Calcular a distância euclidiana entre os embeddings para realizar a verificação
         distance = cosine_similarity(anchor_embedding, comparison_embedding)
-        if distance < 0.4:
+        if distance < 0.3:
             predict_neg.append(1)
         else:
             predict_neg.append(0)
@@ -123,7 +123,7 @@ if __name__ == '__main__':
     end_time = time.time()
 
     print("Métricas:")
-    print("Tempo de Inferência: ", (end_time- start_time))
+    print("Tempo de Inferência: ", (end_time - start_time))
     print("Quantidade de Imagens: ", tot_imges)
     print("Acurácia Média:", acc_media)
     print("Acurácia dos Positivos:", acc_pos)

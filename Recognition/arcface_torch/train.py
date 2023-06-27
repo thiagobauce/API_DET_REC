@@ -2,11 +2,10 @@ import argparse
 import logging
 import os
 from datetime import datetime
-
 import numpy as np
 import torch
 from backbones import get_model
-from dataset import get_dataloader
+from ds import get_dataloader
 from losses import CombinedMarginLoss, ArcFace, CosFace
 from lr_scheduler import PolynomialLRWarmup
 from partial_fc_v2 import PartialFC_V2
@@ -31,7 +30,7 @@ try:
     distributed.init_process_group("nccl")
 except KeyError:
     rank = 0
-    local_rank = 1
+    local_rank = 0
     world_size = 1
     distributed.init_process_group(
         backend="nccl",
@@ -105,9 +104,9 @@ def main(args):
         find_unused_parameters=True)
     backbone.register_comm_hook(None, fp16_compress_hook)
 
-    backbone.train()
-    # FIXME using gradient checkpoint if there are some unused parameters will cause error
     backbone._set_static_graph()
+
+    #print(backbone)
 
     margin_loss = CombinedMarginLoss(
         64,
@@ -150,7 +149,7 @@ def main(args):
     start_epoch = 0
     global_step = 0
     if cfg.resume:
-        dict_checkpoint = torch.load(os.path.join(cfg.output, f"checkpoint_arc_gpu_0.pt"))
+        dict_checkpoint = torch.load(os.path.join(cfg.output, f"checkpoint_gpu_0.pt"))
         start_epoch = dict_checkpoint["epoch"]
         global_step = dict_checkpoint["global_step"]
         backbone.module.load_state_dict(dict_checkpoint["state_dict_backbone"])
@@ -224,16 +223,16 @@ def main(args):
             checkpoint = {
                 "epoch": epoch + 1,
                 "global_step": global_step,
-                "state_dict_backbone": backbone.module.state_dict(),
+                "state_dict_backbone": backbone.state_dict(),
                 "state_dict_softmax_fc": module_partial_fc.state_dict(),
                 "state_optimizer": opt.state_dict(),
                 "state_lr_scheduler": lr_scheduler.state_dict()
             }
-            torch.save(checkpoint, os.path.join(cfg.output, f"checkpoint_pfc03_gpu_{rank}.pt"))
+            torch.save(checkpoint, os.path.join(cfg.output, f"checkpoint_gpu_{rank}.pt"))
 
         if rank == 0:
-            path_module = os.path.join(cfg.output, "model_pfc03.pt")
-            torch.save(backbone.module.state_dict(), path_module)
+            path_module = os.path.join(cfg.output, "model.pt")
+            torch.save(backbone.state_dict(), path_module)
 
             if wandb_logger and cfg.save_artifacts:
                 artifact_name = f"{run_name}_E{epoch}"
@@ -245,8 +244,8 @@ def main(args):
             train_loader.reset()
 
     if rank == 0:
-        path_module = os.path.join(cfg.output, "model_pfc03.pt")
-        torch.save(backbone.module.state_dict(), path_module)
+        path_module = os.path.join(cfg.output, "model.pt")
+        torch.save(backbone.state_dict(), path_module)
         
         if wandb_logger and cfg.save_artifacts:
             artifact_name = f"{run_name}_Final"

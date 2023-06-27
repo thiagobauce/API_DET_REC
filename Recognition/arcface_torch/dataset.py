@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from functools import partial
 from torch import distributed
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, ConcatDataset
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from utils.utils_distributed_sampler import DistributedSampler
@@ -28,19 +28,18 @@ def get_dataloader(
 
     rec = os.path.join(root_dir, 'train.rec')
     idx = os.path.join(root_dir, 'train.idx')
+    root_dir2= '/app/Recognition/arcface_torch/pepo_ds/train/'
     train_set = None
 
-    # Synthetic
-    if root_dir == "synthetic":
-        train_set = SyntheticDataset()
-        dali = False
-
     # Mxnet RecordIO
-    elif os.path.exists(rec) and os.path.exists(idx):
-        train_set = MXFaceDataset(root_dir=root_dir, local_rank=local_rank)
-
+    train_set = MXFaceDataset(root_dir=root_dir, local_rank=local_rank)
+    print(len(train_set))
+    train_set2 = MXFaceDataset(root_dir=root_dir2, local_rank=local_rank)
+    print(len(train_set2))
+    new_set = ConcatDataset([train_set, train_set2])
+    print(len(new_set))
     # Image Folder
-    else:
+    if root_dir is None:
         transform = transforms.Compose([
              transforms.RandomHorizontalFlip(),
              transforms.ToTensor(),
@@ -65,7 +64,7 @@ def get_dataloader(
 
     train_loader = DataLoaderX(
         local_rank=local_rank,
-        dataset=train_set,
+        dataset=new_set,
         batch_size=batch_size,
         sampler=train_sampler,
         num_workers=num_workers,
@@ -139,6 +138,7 @@ class MXFaceDataset(Dataset):
         super(MXFaceDataset, self).__init__()
         self.transform = transforms.Compose(
             [transforms.ToPILImage(),
+             transforms.Resize((112,112)),
              transforms.RandomHorizontalFlip(),
              transforms.ToTensor(),
              transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),

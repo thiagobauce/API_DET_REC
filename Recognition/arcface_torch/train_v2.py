@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from backbones import get_model
 from dataset import get_dataloader
-from losses import CombinedMarginLoss, ArcFace, CosFace
+from losses import CombinedMarginLoss
 from lr_scheduler import PolynomialLRWarmup
 from partial_fc_v2 import PartialFC_V2
 from torch import distributed
@@ -35,7 +35,7 @@ except KeyError:
     world_size = 1
     distributed.init_process_group(
         backend="nccl",
-        init_method="tcp://127.0.0.1:12584",
+        init_method="tcp://127.0.0.1:12585",
         rank=rank,
         world_size=world_size,
     )
@@ -105,8 +105,8 @@ def main(args):
 
     backbone.load_state_dict(torch.load('/app/Recognition/arcface_torch/checkpoints/model.pt'))
 
-    backbone.fc = torch.nn.Linear(backbone.fc.in_features,512)
-    backbone.classifier = torch.nn.Linear(512,19)
+    #backbone.fc = torch.nn.Linear(backbone.fc.in_features,512)
+    #backbone.classifier = torch.nn.Linear(512,19)
     backbone = backbone.cuda()
 
     margin_loss = CombinedMarginLoss(
@@ -204,12 +204,12 @@ def main(args):
                         'Process/Step': global_step,
                         'Process/Epoch': epoch
                     })
-                    
+
                 loss_am.update(loss.item(), 1)
                 callback_logging(global_step, loss_am, epoch, cfg.fp16, lr_scheduler.get_last_lr()[0], amp)
 
-                if global_step % cfg.verbose == 0 and global_step > 0:
-                    callback_verification(global_step, backbone)
+                #if global_step % cfg.verbose == 0 and global_step > 0:
+                #    callback_verification(global_step, backbone)
 
         if cfg.save_all_states:
             checkpoint = {
@@ -220,10 +220,10 @@ def main(args):
                 "state_optimizer": opt.state_dict(),
                 "state_lr_scheduler": lr_scheduler.state_dict()
             }
-            torch.save(checkpoint, os.path.join(cfg.output, f"checkpoint_pfc03_gpu_{rank}.pt"))
+            torch.save(checkpoint, os.path.join(cfg.output, f"checkpoint_ruim_gpu_{rank}.pt"))
 
         if rank == 0:
-            path_module = os.path.join(cfg.output, "model_finned.pt")
+            path_module = os.path.join(cfg.output, "model_ruim.pt")
             torch.save(backbone.state_dict(), path_module)
 
             if wandb_logger and cfg.save_artifacts:
@@ -236,7 +236,7 @@ def main(args):
             train_loader.reset()
 
     if rank == 0:
-        path_module = os.path.join(cfg.output, "model_finned.pt")
+        path_module = os.path.join(cfg.output, "model_ruim.pt")
         torch.save(backbone.state_dict(), path_module)
         
         if wandb_logger and cfg.save_artifacts:

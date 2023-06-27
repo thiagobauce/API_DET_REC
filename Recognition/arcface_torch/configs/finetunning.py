@@ -16,13 +16,13 @@ config.momentum = 0.9
 config.weight_decay = 5e-4
 config.batch_size = 8
 config.lr = 0.1
-config.verbose = 2000
+config.verbose = 30
 config.dali = False
 
 config.rec = "/app/Recognition/arcface_torch/pepo_ds/train"
 config.num_classes = 19
-config.num_image = 225
-config.num_epoch = 20
+config.num_image = 226
+config.num_epoch = 10
 config.warmup_epoch = 0
 config.val_targets = ['lfw', 'cfp_fp', "agedb_30"]
 

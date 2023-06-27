@@ -214,7 +214,7 @@ def load_bin(path, image_size):
         if idx % 1000 == 0:
             print('loading bin', idx)
     print(data_list[0].shape)
-    print(issame_list)
+    print(len(issame_list))
     return data_list, issame_list
 
 @torch.no_grad()
@@ -323,12 +323,12 @@ if __name__ == '__main__':
     # general
     parser.add_argument('--data-dir', default='../faces_emore', help='')
     parser.add_argument('--model',
-                        default='../checkpoints/model_finned.pt',
+                        default='../checkpoints/model_ruim.pt',
                         help='path to load model.')
     parser.add_argument('--target',
-                        default='agedb_30',
-                        help='test targets.')
-    parser.add_argument('--gpu', default=0, type=int, help='gpu id')
+                        default='cfp_fp',
+                        help='testp targets.')
+    parser.add_argument('--gpu', default=1, type=int, help='gpu id')
     parser.add_argument('--batch-size', default=32, type=int, help='')
     parser.add_argument('--max', default='', type=str, help='')
     parser.add_argument('--mode', default=0, type=int, help='')
@@ -337,15 +337,10 @@ if __name__ == '__main__':
     image_size = [112, 112]
     print('image_size', image_size)
     device = torch.device(args.gpu)
-    
-    #model = torchvision.models.resnet50(pretrained=True)
-    #model.fc = nn.Linear(model.fc.in_features, 512)
-    #model.classifier = nn.Linear(model.fc.in_features, 512)
-    #model.load_state_dict(torch.load(args.model)['model'])
 
     model = get_model('r50', fp16=False)
-    model.fc = torch.nn.Linear(model.fc.in_features,512)
-    model.classifier = torch.nn.Linear(512,19)
+    #model.fc = torch.nn.Linear(model.fc.in_features,512)
+    #model.classifier = torch.nn.Linear(512,19)
     model.load_state_dict(torch.load(args.model))
 
     model = model.to(device)
@@ -356,10 +351,7 @@ if __name__ == '__main__':
     ver_name_list = []
     for name in args.target.split(','):
         path = os.path.join(args.data_dir, name + ".bin")
-        print('aqui')
-        print(path)
         if os.path.exists(path):
-            print('aqui')
             print('loading.. ', name)
             data_set = load_bin(path, image_size)
             ver_list.append(data_set)

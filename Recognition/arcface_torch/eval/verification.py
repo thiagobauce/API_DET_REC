@@ -221,7 +221,7 @@ def load_bin(path, image_size):
         if idx % 1000 == 0:
             print('loading bin', idx)
     print(data_list[0].shape)
-    print(issame_list)
+    #print(issame_list)
     return data_list, issame_list
 
 @torch.no_grad()
@@ -241,7 +241,7 @@ def test(data_set, backbone, batch_size, nfolds=10):
             _data = data[bb - batch_size: bb]
             time0 = datetime.datetime.now()
             img = ((_data / 255) - 0.5) / 0.5
-            net_out: torch.Tensor = backbone(img)
+            net_out: torch.Tensor = backbone(img.cuda())
             _embeddings = net_out.detach().cpu().numpy()
             time_now = datetime.datetime.now()
             diff = time_now - time0

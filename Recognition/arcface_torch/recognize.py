@@ -19,6 +19,8 @@ import sklearn.neighbors
 import sklearn.metrics as metrics
 from sklearn.preprocessing import LabelEncoder
 
+#device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
 transform = transforms.Compose([
         transforms.Resize((130, 130)),
         transforms.CenterCrop((112, 112)),
@@ -26,30 +28,20 @@ transform = transforms.Compose([
         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
     ])
 
-#model = torchvision.models.resnet50(pretrained=True)
-#model.fc = nn.Linear(model.fc.in_features,512)
-#model.classifier = nn.Linear(model.fc.in_features,512)
-#model.load_state_dict(torch.load('/app/Recognition/arcface_torch/last_run.pth',map_location=torch.device('cpu'))['model'])
-
 model = get_model('r50', fp16=False)
+#model.fc = nn.Linear(model.fc.in_features,512)
+#model.classifier = nn.Linear(512,19)
 model.load_state_dict(torch.load('/app/Recognition/arcface_torch/checkpoints/model.pt',map_location=torch.device('cpu')))
-
-ds = torchvision.datasets.ImageFolder('/app/Recognition/arcface_torch/pessoas', transform=transform)
-    
-nomes = np.asarray(ds.classes)
-
-dl = torch.utils.data.DataLoader(ds,batch_size=len(ds))
-
 model.eval()
 
+ds = torchvision.datasets.ImageFolder('/app/Recognition/arcface_torch/pessoas', transform=transform)
+dl = torch.utils.data.DataLoader(ds,batch_size=len(ds))
+nomes = np.asarray(ds.classes)
+
 x,y = next(iter(dl))
-
 pred = model(x)
-
 xall = np.asarray(pred.tolist())
-
 knn = sklearn.neighbors.KNeighborsClassifier(n_neighbors=1,weights='distance')
-
 knn.fit(xall,y)
 
 def get_person_ids(crops):
@@ -94,11 +86,7 @@ def encontra_pessoas(image_file):
 
 def main(args):
     image_file = args.path
-
-    #people = find_people(image_file)
-
     people = encontra_pessoas(image_file)
-
     return people
 
 
