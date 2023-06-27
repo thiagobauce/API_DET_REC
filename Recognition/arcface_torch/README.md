@@ -46,8 +46,5 @@ L34FC 0.686
 L234FC 0.695
 L4ZS 0.996
 
-Please, see our paper: [API para Detecção e Reconhecimento de Faces: Análise da
-Viabilidade de Fine-tuning em um Modelo Zero-shot]()
-
 ## References
 -[ArcFace Partial FC](https://github.com/deepinsight/insightface)
