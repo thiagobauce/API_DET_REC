@@ -4,7 +4,7 @@ In this work we used RetinaFace (Pytorch) with Resnet50 as backbone to detection
 
 ## Detection
 As we said before, we used RetinaFace (Pytorch).\
-Here we trained in GPU Tesla \
+Here we trained in GPU RTX 3080 TI \
 
 Config:\
 -8 bacth size \
