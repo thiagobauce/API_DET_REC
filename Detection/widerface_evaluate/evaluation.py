@@ -14,10 +14,11 @@ from scipy.io import loadmat
 from bbox import bbox_overlaps
 from IPython import embed
 
-
+"""Esta função lê os arquivos de anotação de caixas delimitadoras de faces de um diretório especificado e 
+retorna as informações dessas caixas delimitadoras, incluindo a lista de caixas delimitadoras de rostos, lista de eventos, 
+lista de arquivos e listas separadas para diferentes níveis de dificuldade (fácil, médio, difícil)."""
 def get_gt_boxes(gt_dir):
     """ gt dir: (wider_face_val.mat, wider_easy_val.mat, wider_medium_val.mat, wider_hard_val.mat)"""
-
     gt_mat = loadmat(os.path.join(gt_dir, 'wider_face_val.mat'))
     hard_mat = loadmat(os.path.join(gt_dir, 'wider_hard_val.mat'))
     medium_mat = loadmat(os.path.join(gt_dir, 'wider_medium_val.mat'))
@@ -33,7 +34,8 @@ def get_gt_boxes(gt_dir):
 
     return facebox_list, event_list, file_list, hard_gt_list, medium_gt_list, easy_gt_list
 
-
+""" Esta função lê as caixas delimitadoras de faces anotadas em um arquivo de texto e retorna as informações dessas caixas delimitadoras.
+Ele também armazena em cache as informações lidas para melhorar o desempenho em leituras subsequentes."""
 def get_gt_boxes_from_txt(gt_path, cache_dir):
 
     cache_file = os.path.join(cache_dir, 'gt_cache.pkl')
@@ -79,6 +81,8 @@ def get_gt_boxes_from_txt(gt_path, cache_dir):
     return boxes
 
 
+"""Esta função lê as caixas delimitadoras de faces previstas a partir de um arquivo de texto e 
+retorna o nome do arquivo de imagem correspondente e as caixas delimitadoras como um array NumPy."""
 def read_pred_file(filepath):
 
     with open(filepath, 'r') as f:
@@ -101,6 +105,8 @@ def read_pred_file(filepath):
     return img_file.split('/')[-1], boxes
 
 
+"""Esta função lê as previsões de caixas delimitadoras de rostos de um diretório especificado e 
+retorna um dicionário contendo as previsões organizadas por evento e nome de arquivo de imagem."""
 def get_preds(pred_dir):
     events = os.listdir(pred_dir)
     boxes = dict()
@@ -117,15 +123,14 @@ def get_preds(pred_dir):
         boxes[event] = current_event
     return boxes
 
-
+"""Esta função normaliza os valores de pontuação das previsões de caixas delimitadoras de rostos para que 
+estejam dentro de um intervalo específico."""
 def norm_score(pred):
     """ norm score
     pred {key: [[x1,y1,x2,y2,s]]}
     """
-
     max_score = 0
     min_score = 1
-
     for _, k in pred.items():
         for _, v in k.items():
             if len(v) == 0:
@@ -143,12 +148,14 @@ def norm_score(pred):
             v[:, -1] = (v[:, -1] - min_score)/diff
 
 
+
+"""Esta função realiza a avaliação de uma única imagem, comparando as caixas delimitadoras previstas 
+com as caixas delimitadoras reais e calculando a taxa de recall e uma lista de propostas de detecção."""
 def image_eval(pred, gt, ignore, iou_thresh):
     """ single image evaluation
     pred: Nx5
     gt: Nx4
-    ignore:
-    """
+    ignore:"""
 
     _pred = pred.copy()
     _gt = gt.copy()
@@ -179,10 +186,10 @@ def image_eval(pred, gt, ignore, iou_thresh):
     return pred_recall, proposal_list
 
 
+"""Esta função calcula informações de precisão e recall para uma determinada faixa de limiar de confiança."""
 def img_pr_info(thresh_num, pred_info, proposal_list, pred_recall):
     pr_info = np.zeros((thresh_num, 2)).astype('float')
     for t in range(thresh_num):
-
         thresh = 1 - (t+1)/thresh_num
         r_index = np.where(pred_info[:, 4] >= thresh)[0]
         if len(r_index) == 0:
@@ -196,6 +203,7 @@ def img_pr_info(thresh_num, pred_info, proposal_list, pred_recall):
     return pr_info
 
 
+"""Esta função calcula as informações de precisão e recall para o conjunto de dados inteiro."""
 def dataset_pr_info(thresh_num, pr_curve, count_face):
     _pr_curve = np.zeros((thresh_num, 2))
     for i in range(thresh_num):
@@ -204,8 +212,8 @@ def dataset_pr_info(thresh_num, pr_curve, count_face):
     return _pr_curve
 
 
+"""Esta função calcula a pontuação de Average Precision (AP) usando as informações de recall e precisão."""
 def voc_ap(rec, prec):
-
     # correct AP calculation
     # first append sentinel values at the end
     mrec = np.concatenate(([0.], rec, [1.]))
@@ -223,7 +231,8 @@ def voc_ap(rec, prec):
     ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
     return ap
 
-
+"""Esta função coordena o processo de avaliação, lendo as previsões e as caixas delimitadoras reais, 
+calculando as métricas de AP para diferentes configurações de dificuldade e imprimindo os resultados."""
 def evaluation(pred, gt_path, iou_thresh=0.5):
     pred = get_preds(pred)
     norm_score(pred)
@@ -251,7 +260,6 @@ def evaluation(pred, gt_path, iou_thresh=0.5):
 
             for j in range(len(img_list)):
                 pred_info = pred_list[str(img_list[j][0][0])]
-
                 gt_boxes = gt_bbx_list[j][0].astype('float')
                 keep_index = sub_gt_list[j][0]
                 count_face += len(keep_index)
@@ -262,15 +270,12 @@ def evaluation(pred, gt_path, iou_thresh=0.5):
                 if len(keep_index) != 0:
                     ignore[keep_index-1] = 1
                 pred_recall, proposal_list = image_eval(pred_info, gt_boxes, ignore, iou_thresh)
-
                 _img_pr_info = img_pr_info(thresh_num, pred_info, proposal_list, pred_recall)
-
                 pr_curve += _img_pr_info
         pr_curve = dataset_pr_info(thresh_num, pr_curve, count_face)
 
         propose = pr_curve[:, 0]
         recall = pr_curve[:, 1]
-
         ap = voc_ap(recall, propose)
         aps.append(ap)
 
@@ -281,12 +286,11 @@ def evaluation(pred, gt_path, iou_thresh=0.5):
     print("=================================================")
 
 
-if __name__ == '__main__':
 
+if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--pred', default="./widerface_txt/")
     parser.add_argument('-g', '--gt', default='./ground_truth/')
-
     args = parser.parse_args()
     evaluation(args.pred, args.gt)
 
