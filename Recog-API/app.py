@@ -23,10 +23,8 @@ def index():
 
 @app.route('/detect', methods=['POST'])
 def detect_faces():
-    # Recebe a imagem/vídeo enviada pelo cliente
     file = request.files['file']    
     
-    # Salva o arquivo em um diretório com a data atual
     now = datetime.now()
     date_str = now.strftime("%Y/%m/%d")
     os.makedirs(date_str, exist_ok=True)
@@ -45,7 +43,6 @@ def detect_faces():
 
 @app.route('/recognize', methods=['POST'])
 def recognize_faces():
-    # Recebe a imagem/vídeo enviada pelo cliente
     file = request.files['file']
 
     now = datetime.now()
