@@ -6,6 +6,7 @@ To train the model, execute the following command:
 
 bash
 python train.py configs/megaface
+
 To optimize resource usage and achieve optimal performance, adjust the sample_rate parameter in the configuration file to a value less than 1.0.
 
 For evaluation, the files verification_v3.py and verification_v4.py handle image pairs and utilize cosine similarity from PyTorch for determining positive and negative pairs.
