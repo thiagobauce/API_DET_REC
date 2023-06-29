@@ -1,0 +1,12 @@
+mkdir app
+apt-get update
+apt-get install python3.7-dev
+apt-get install python3-distutils
+python3.7 get-pip.py
+pip install -- upgrade pip
+pip install --upgrade setuptools
+apt-get install -y libgl1-mesa-dev
+echo $LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/caminho/para/libGL:$LD_LIBRARY_PATH
+pip install -r /app/Recog-API/requirements.txt
+apt-get install libglib2.0-0

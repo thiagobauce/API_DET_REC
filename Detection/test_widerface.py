@@ -86,7 +86,6 @@ if __name__ == '__main__':
     with open(testset_list, 'r') as fr:
         test_dataset = fr.read().split()
     num_images = len(test_dataset)
-    print(num_images)
 
     _t = {'forward_pass': Timer(), 'misc': Timer()}
 
